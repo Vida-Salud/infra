@@ -5,6 +5,7 @@ services:
     image: rabbitmq:4.2-management
     container_name: rabbitmq-1
     hostname: rabbitmq-1
+    restart: always     # vuelve a arrancar solo si se reinicia la EC2
     ports:
       - "5672:5672"     # AMQP (lo usan notify y appointments)
       - "15672:15672"   # Consola web nodo 1
@@ -27,6 +28,7 @@ services:
     image: rabbitmq:4.2-management
     container_name: rabbitmq-2
     hostname: rabbitmq-2
+    restart: always     # vuelve a arrancar solo si se reinicia la EC2
     ports:
       - "5673:5672"     # AMQP nodo 2
       - "15673:15672"   # Consola web nodo 2
