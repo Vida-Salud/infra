@@ -57,8 +57,21 @@ services:
       RABBITMQ_PASS: admin123
       # Simulación de fallas (pacientes FALLA_TEMPORAL / FALLA_PERMANENTE) para la demo de DLQ
       NOTIFY_SIMULACION: "true"
+      # SMTP: Mailpit en la red interna del compose
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - mailpit
+    restart: on-failure
+
+  mailpit:
+    image: axllent/mailpit:v1.30.5
+    container_name: vidasalud-mailpit
+    # Solo se publica la bandeja web; el SMTP (1025) lo usa notify por la red interna
+    ports:
+      - "8025:8025"
     restart: on-failure
 
   catalog:
