@@ -1,0 +1,135 @@
+name: vidasalud-deploy
+
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    container_name: vidasalud-oracle
+    environment:
+      ORACLE_PASSWORD: admin123
+      APP_USER: vidasalud
+      APP_USER_PASSWORD: admin123
+    ports:
+      - "1521:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  appointments:
+    build:
+      context: ../../ms-vidasalud-appointments
+      dockerfile: Dockerfile
+    container_name: vidasalud-appointments
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      DB_SERVICE: FREEPDB1
+      DB_USERNAME: vidasalud
+      DB_PASSWORD: admin123
+      AZURE_TENANT_ID: 9832f4f3-52dd-4367-a3b0-b4437d223f58
+      AZURE_CLIENT_ID: c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      AZURE_APP_ID_URI: api://c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      APPOINTMENTS_URL: http://appointments:8081
+      TZ: America/Santiago
+      # RabbitMQ (productor): clúster de 2 nodos en ec2-mq (IP privada, no cambia)
+      RABBITMQ_ADDRESSES: 10.0.8.187:5672,10.0.8.187:5673
+      RABBITMQ_USER: vidasalud
+      RABBITMQ_PASS: admin123
+    ports:
+      - "8081:8081"
+    depends_on:
+      oracle:
+        condition: service_healthy
+    restart: always
+
+  notify:
+    build:
+      context: ../../ms-vidasalud-notify
+      dockerfile: Dockerfile
+    container_name: vidasalud-notify
+    environment:
+      TZ: America/Santiago
+      # RabbitMQ (consumidor): mismo clúster en ec2-mq
+      RABBITMQ_ADDRESSES: 10.0.8.187:5672,10.0.8.187:5673
+      RABBITMQ_USER: vidasalud
+      RABBITMQ_PASS: admin123
+      # Simulación de fallas (FALLA_TEMPORAL / FALLA_PERMANENTE) para la demo de DLQ
+      NOTIFY_SIMULACION: "true"
+      # SMTP: Mailpit en la red interna del compose
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+      # RAM limitada: la EC2 tiene poca memoria libre
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    depends_on:
+      - mailpit
+    restart: always
+
+  mailpit:
+    image: axllent/mailpit:v1.30.5
+    container_name: vidasalud-mailpit
+    environment:
+      # Bandeja web protegida (queda expuesta a internet en AWS)
+      MP_UI_AUTH: "vidasalud:admin123"
+    # Solo se publica la bandeja web; el SMTP (1025) lo usa notify por la red interna
+    ports:
+      - "8025:8025"
+    restart: always
+
+  catalog:
+    build:
+      context: ../../ms-vidasalud-catalog/ms-vidasalud-catalog
+      dockerfile: Dockerfile
+    container_name: vidasalud-catalog
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      DB_SERVICE: FREEPDB1
+      DB_USERNAME: vidasalud
+      DB_PASSWORD: admin123
+      AZURE_TENANT_ID: 9832f4f3-52dd-4367-a3b0-b4437d223f58
+      AZURE_CLIENT_ID: c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      AZURE_APP_ID_URI: api://c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      TZ: America/Santiago
+    ports:
+      - "8091:8091"
+    depends_on:
+      oracle:
+        condition: service_healthy
+    restart: always
+
+  bff:
+    build:
+      context: ../../ms-vidasalud-bff
+      dockerfile: Dockerfile
+    container_name: vidasalud-bff
+    environment:
+      AZURE_TENANT_ID: 9832f4f3-52dd-4367-a3b0-b4437d223f58
+      AZURE_CLIENT_ID: c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      AZURE_APP_ID_URI: api://c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      APPOINTMENTS_URL: http://appointments:8081
+      CATALOG_URL: http://catalog:8091
+      TZ: America/Santiago
+    ports:
+      - "8080:8090"   # el API Gateway llama al 8080
+    depends_on:
+      - appointments
+      - catalog
+    restart: always
+
+  frontend:
+    build:
+      context: ../../frontend-vidasalud
+      dockerfile: Dockerfile
+      args:
+        API_BASE_URL: https://2q6ggk5owk.execute-api.us-east-1.amazonaws.com/vidasalud
+        REDIRECT_URI: https://54.85.92.234
+        POST_LOGOUT_REDIRECT_URI: https://54.85.92.234
+    container_name: vidasalud-frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - bff
+    restart: always
