@@ -77,6 +77,26 @@ services:
       - "8025:8025"
     restart: always
 
+  rabbit-admin:
+    build:
+      context: ../../ms-vidasalud-rabbit-admin
+      dockerfile: Dockerfile
+    container_name: vidasalud-rabbit-admin
+    environment:
+      AZURE_TENANT_ID: 9832f4f3-52dd-4367-a3b0-b4437d223f58
+      AZURE_CLIENT_ID: c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      AZURE_APP_ID_URI: api://c0093a05-7296-42f7-b6e7-d263c3db2fb0
+      TZ: America/Santiago
+      # RabbitMQ: administra el clúster de ec2-mq (IP privada)
+      RABBITMQ_ADDRESSES: 10.0.8.187:5672,10.0.8.187:5673
+      RABBITMQ_USER: vidasalud
+      RABBITMQ_PASS: admin123
+      # RAM limitada: la EC2 tiene poca memoria libre
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    ports:
+      - "8093:8093"   # se prueba con Postman (JWT con rol Admin)
+    restart: always
+
   catalog:
     build:
       context: ../../ms-vidasalud-catalog/ms-vidasalud-catalog
