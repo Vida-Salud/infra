@@ -96,7 +96,7 @@ services:
 
   catalog:
     build:
-      context: ../../ms-vidasalud-catalog/ms-vidasalud-catalog
+      context: ../../ms-vidasalud-catalog
       dockerfile: Dockerfile
     container_name: vidasalud-catalog
     environment:
