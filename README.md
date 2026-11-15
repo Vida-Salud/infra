@@ -4,7 +4,7 @@ Archivos de despliegue con Docker Compose. Cada carpeta corresponde a una EC2 de
 
 | Archivo | Dónde se usa | Servicios |
 |---|---|---|
-| `apps/compose.yml` | Local (PC de desarrollo) | Oracle, appointments, notify, Mailpit, catalog, bff, frontend |
+| `apps/compose.yml` | Local (PC de desarrollo) | Oracle, appointments, notify, Mailpit, catalog, rabbit-admin, bff, frontend |
 | `apps/compose.aws.yml` | **ec2-apps** (AWS) | Los mismos, con API Gateway, HTTPS y RabbitMQ en ec2-mq |
 | `mq/compose.yml` | Local y **ec2-mq** (AWS) | Clúster RabbitMQ de 2 nodos con Management UI |
 
@@ -36,8 +36,13 @@ carpeta/
 ├── ms-vidasalud-notify/
 ├── ms-vidasalud-catalog/
 ├── ms-vidasalud-bff/
+├── ms-vidasalud-rabbit-admin/
 └── frontend-vidasalud/
 ```
+
+## Variables de entorno (`.env`)
+
+Las contraseñas no están en el repo. Copia `apps/.env.example` a `apps/.env` y `mq/.env.example` a `mq/.env` y completa los valores (solo letras y números en las contraseñas). Los `.env` están en `.gitignore`; en AWS se copian con `scp`, nunca por git. `apps/.env` incluye `FRONTEND_URL` y `API_BASE_URL` (en AWS) y `NOTIFY_PERFIL`: vacío por defecto, `demo` enciende los pacientes `FALLA_TEMPORAL` y `FALLA_PERMANENTE` de notify para la demo de la DLQ.
 
 ## Levantar en local
 
@@ -80,7 +85,9 @@ Para actualizar un solo servicio sin tocar el resto (por ejemplo, después de un
 docker compose -f compose.aws.yml up -d --build --no-deps notify
 ```
 
-`compose.aws.yml` usa `name: vidasalud-deploy` para reutilizar los contenedores existentes. Oracle no tiene volumen: si se recreara su contenedor, se perderían los datos.
+`compose.aws.yml` usa `name: vidasalud-deploy` para reutilizar los contenedores existentes. Oracle guarda sus datos en el volumen `oracle_data`: recrear el contenedor no los borra. Los servicios con healthcheck (`appointments`, `catalog`, `notify`, `rabbit-admin`, `bff`) informan `(healthy)` en `docker compose ps`; el BFF espera a appointments y catalog. En AWS, appointments, catalog y Oracle no se publican en el host (solo `expose`): para consultar la base, `docker exec -it vidasalud-oracle sqlplus vidasalud@//localhost/FREEPDB1`.
+
+Los contratos están en `docs/api-v1.md` (HTTP) y `docs/mensajes-v1.md` (RabbitMQ).
 
 ## Accesos
 
@@ -88,6 +95,7 @@ docker compose -f compose.aws.yml up -d --build --no-deps notify
 |---|---|---|
 | Frontend | http://localhost:4200 | https://IP-ec2-apps |
 | BFF | http://localhost:8090 | vía API Gateway |
+| rabbit-admin | http://localhost:8093 | http://IP-ec2-apps:8093 (solo Admin, por Postman) |
 | Bandeja de correos (Mailpit) | http://localhost:8025 | http://IP-ec2-apps:8025 (con usuario y clave) |
 | RabbitMQ nodo 1 | http://localhost:15672 | http://IP-ec2-mq:15672 |
 | RabbitMQ nodo 2 | http://localhost:15673 | http://IP-ec2-mq:15673 |
@@ -97,11 +105,14 @@ docker compose -f compose.aws.yml up -d --build --no-deps notify
 | EC2 | Puerto | Origen | Uso |
 |---|---|---|---|
 | ec2-mq | 5672-5673 | IP privada de ec2-apps | AMQP (microservicios) |
-| ec2-mq | 15672-15673 | Internet (con login) | Consola de RabbitMQ |
+| ec2-mq | 15672-15673 | IP de cada integrante del equipo ("My IP") | Consola de RabbitMQ |
 | ec2-mq | 22 | IP del administrador + EC2 Instance Connect | SSH |
 | ec2-apps | 80, 443 | Internet | Frontend |
 | ec2-apps | 8080 | Internet | BFF (API Gateway) |
-| ec2-apps | 8025 | Internet (con login) | Bandeja de Mailpit |
+| ec2-apps | 8025 | IP de cada integrante del equipo ("My IP") | Bandeja de Mailpit |
+| ec2-apps | 8093 | IP de cada integrante (opcional) | rabbit-admin con Postman |
+
+appointments (8081), catalog (8091) y Oracle (1521) no tienen regla: ya no se publican en el host.
 
 El SMTP de Mailpit (1025) no se publica: solo lo usa notify por la red interna de Docker.
 
