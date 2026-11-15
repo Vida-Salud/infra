@@ -60,8 +60,8 @@ services:
       TZ: America/Santiago
       # RabbitMQ (consumidor): mismo clúster de 2 nodos
       <<: *rabbit
-      # Simulación de fallas (pacientes FALLA_TEMPORAL / FALLA_PERMANENTE) para la demo de DLQ
-      NOTIFY_SIMULACION: "true"
+      # Simulación de fallas: NOTIFY_PERFIL=demo en .env (o en la línea de comandos) activa FALLA_TEMPORAL / FALLA_PERMANENTE
+      SPRING_PROFILES_ACTIVE: ${NOTIFY_PERFIL:-}
       # SMTP: Mailpit en la red interna del compose
       MAIL_HOST: mailpit
       MAIL_PORT: 1025
