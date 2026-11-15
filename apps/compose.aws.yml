@@ -126,6 +126,7 @@ services:
       <<: *azure
       APPOINTMENTS_URL: http://appointments:8081
       CATALOG_URL: http://catalog:8091
+      CORS_ORIGINS: ${FRONTEND_URL:?falta en .env}
       TZ: America/Santiago
     ports:
       - "8080:8090"   # el API Gateway llama al 8080
@@ -139,9 +140,9 @@ services:
       context: ../../frontend-vidasalud
       dockerfile: Dockerfile
       args:
-        API_BASE_URL: https://2q6ggk5owk.execute-api.us-east-1.amazonaws.com/vidasalud
-        REDIRECT_URI: https://54.85.92.234
-        POST_LOGOUT_REDIRECT_URI: https://54.85.92.234
+        API_BASE_URL: ${API_BASE_URL:?falta en .env}
+        REDIRECT_URI: ${FRONTEND_URL}
+        POST_LOGOUT_REDIRECT_URI: ${FRONTEND_URL}
     container_name: vidasalud-frontend
     ports:
       - "80:80"
