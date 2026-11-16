@@ -1,8 +1,11 @@
 name: vidasalud-kafka
 
+# Arquitectura Kafka del caso (ec2-kafka): ZooKeeper x3 + Kafka x3 + Kafka UI.
+# kafka-init crea los tópicos de topics.conf una vez que los tres brokers están sanos.
+
 x-zookeeper: &zookeeper
-  image: confluentinc/cp-zookeeper:7.9.8
-  restart: always
+  image: confluentinc/cp-zookeeper:${CP_VERSION:-7.9.8}
+  restart: always   # vuelve a arrancar solo si se reinicia la EC2
   networks:
     - kafka_cluster
   healthcheck:
@@ -16,12 +19,13 @@ x-zookeeper-env: &zookeeper-env
   ZOOKEEPER_TICK_TIME: 2000
   ZOOKEEPER_INIT_LIMIT: 5
   ZOOKEEPER_SYNC_LIMIT: 2
+  # Ensemble de 3: tolera la caída de 1 nodo (quórum = 2)
   ZOOKEEPER_SERVERS: zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888
   KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
-  KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=srvr,ruok,mntr"   
+  KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=srvr,ruok,mntr"
 
 x-kafka: &kafka
-  image: confluentinc/cp-kafka:7.9.8
+  image: confluentinc/cp-kafka:${CP_VERSION:-7.9.8}
   restart: always
   networks:
     - kafka_cluster
@@ -33,6 +37,7 @@ x-kafka: &kafka
     zookeeper-3:
       condition: service_healthy
   healthcheck:
+    # JMX_PORT vacío: la herramienta no intenta abrir el puerto JMX que ya usa el broker
     test: ["CMD-SHELL", "JMX_PORT= KAFKA_HEAP_OPTS=-Xmx64m kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1"]
     interval: 30s
     timeout: 10s
@@ -41,17 +46,23 @@ x-kafka: &kafka
 
 x-kafka-env: &kafka-env
   KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
+  # INTERNO: entre brokers, Kafka UI y kafka-init. EXTERNO: microservicios e IDE.
   KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNO:PLAINTEXT,EXTERNO:PLAINTEXT
   KAFKA_INTER_BROKER_LISTENER_NAME: INTERNO
+  # Los tópicos se crean de forma controlada (topics.conf o ms-vidasalud-kafka-admin), nunca por accidente
   KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_DELETE_TOPIC_ENABLE: "true"
+  # Valores por defecto del clúster para un tópico creado sin parámetros
   KAFKA_NUM_PARTITIONS: 3
   KAFKA_DEFAULT_REPLICATION_FACTOR: 3
   KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_LOG_RETENTION_HOURS: 168
+  # Tópicos internos replicados en los 3 brokers
   KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
   KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
   KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-  KAFKA_LOG_RETENTION_HOURS: 168
   KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+  # Métricas JMX para Kafka UI
   KAFKA_JMX_PORT: 9997
   KAFKA_JMX_HOSTNAME: localhost
 
@@ -99,9 +110,11 @@ services:
       <<: *kafka-env
       KAFKA_BROKER_ID: 1
       KAFKA_LISTENERS: INTERNO://0.0.0.0:29092,EXTERNO://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-1:29092,EXTERNO://${KAFKA_HOST:-localhost}:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-1:29092,EXTERNO://${KAFKA_HOST:-host.docker.internal}:9092
     volumes:
       - kafka_data_1:/var/lib/kafka/data
+      # scripts de administración: docker compose exec kafka-1 bash /opt/vidasalud/scripts/inspeccionar.sh
+      - ./scripts:/opt/vidasalud/scripts:ro
 
   kafka-2:
     <<: *kafka
@@ -113,7 +126,7 @@ services:
       <<: *kafka-env
       KAFKA_BROKER_ID: 2
       KAFKA_LISTENERS: INTERNO://0.0.0.0:29092,EXTERNO://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-2:29092,EXTERNO://${KAFKA_HOST:-localhost}:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-2:29092,EXTERNO://${KAFKA_HOST:-host.docker.internal}:9093
     volumes:
       - kafka_data_2:/var/lib/kafka/data
 
@@ -127,21 +140,48 @@ services:
       <<: *kafka-env
       KAFKA_BROKER_ID: 3
       KAFKA_LISTENERS: INTERNO://0.0.0.0:29092,EXTERNO://0.0.0.0:9094
-      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-3:29092,EXTERNO://${KAFKA_HOST:-localhost}:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-3:29092,EXTERNO://${KAFKA_HOST:-host.docker.internal}:9094
     volumes:
       - kafka_data_3:/var/lib/kafka/data
 
+  # Se ejecuta una vez y termina: crea los tópicos de topics.conf y reconcilia su configuración.
+  # Para volver a aplicarla: docker compose run --rm kafka-init
+  kafka-init:
+    image: confluentinc/cp-kafka:${CP_VERSION:-7.9.8}
+    container_name: kafka-init
+    restart: "no"
+    networks:
+      - kafka_cluster
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP: kafka-1:29092,kafka-2:29092,kafka-3:29092
+    volumes:
+      - ./scripts:/opt/vidasalud/scripts:ro
+      - ./topics.conf:/opt/vidasalud/topics.conf:ro
+    entrypoint: ["bash", "/opt/vidasalud/scripts/crear-topicos.sh"]
+
   kafka-ui:
-    image: kafbat/kafka-ui:v1.5.0
+    image: kafbat/kafka-ui:${KAFKA_UI_VERSION:-v1.5.0}
     container_name: kafka-ui
     restart: always
     ports:
-      - "8080:8080"     
+      - "8080:8080"   # Consola web: brokers, tópicos, mensajes y grupos de consumidores
     environment:
       KAFKA_CLUSTERS_0_NAME: vidasalud
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_CLUSTERS_0_METRICS_PORT: 9997
       DYNAMIC_CONFIG_ENABLED: "true"
+      # La consola permite borrar tópicos y mensajes: nunca sin login
+      AUTH_TYPE: LOGIN_FORM
+      SPRING_SECURITY_USER_NAME: ${KAFKA_UI_USER:-vidasalud}
+      SPRING_SECURITY_USER_PASSWORD: ${KAFKA_UI_PASS:?falta en .env}
+      JAVA_OPTS: "-Xms64m -Xmx256m"
     networks:
       - kafka_cluster
     depends_on:

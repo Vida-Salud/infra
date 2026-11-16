@@ -1,0 +1,4 @@
+# Los scripts y archivos de configuración se montan en contenedores Linux: siempre LF,
+# aunque el repo se clone en Windows (un CRLF rompe bash con "$'\r': command not found").
+*.sh   text eol=lf
+*.conf text eol=lf

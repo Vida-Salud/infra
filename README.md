@@ -131,24 +131,29 @@ El SMTP de Mailpit (1025) no se publica: solo lo usa notify por la red interna d
 
 - **3 Zookeeper** (`zookeeper-1..3`): guardan los metadatos del clúster (qué brokers están vivos, quién es líder de cada partición). Con 3 nodos el quórum es 2, así que sigue funcionando si cae uno.
 - **3 brokers** (`kafka-1..3`): guardan las particiones. Por defecto cada tópico nuevo tiene 3 particiones y 3 réplicas, y `min.insync.replicas=2`: con `acks=all` se puede caer un broker sin perder datos ni dejar de escribir.
-- **Kafka UI** (puerto 8080): muestra brokers, tópicos, particiones, mensajes, consumer groups, offsets y lag.
+- **Kafka UI** (puerto 8080, con usuario y clave de `kafka/.env`): muestra brokers, tópicos, particiones, mensajes, consumer groups, offsets y lag.
 - `auto.create.topics.enable=false`: los tópicos se crean a propósito, con su configuración, y no al primer envío.
-- Cada broker tiene un listener **interno** (`kafka-N:29092`, entre brokers y para Kafka UI) y uno **externo** (9092, 9093 y 9094, para los microservicios). `KAFKA_HOST` en `kafka/.env` es la dirección que anuncian: `localhost` en el PC y la IP privada de ec2-kafka en AWS.
+- **Topología** en `kafka/topics.conf` (tópico, particiones, réplicas, retención, `cleanup.policy`). El servicio `kafka-init` la aplica al levantar y es idempotente: `docker compose run --rm kafka-init` la vuelve a aplicar.
+- Cada broker tiene un listener **interno** (`kafka-N:29092`, entre brokers, Kafka UI y kafka-init) y uno **externo** (9092, 9093 y 9094, para los microservicios). `KAFKA_HOST` en `kafka/.env` es la dirección que anuncian: `host.docker.internal` en el PC (sirve al IDE y a los contenedores de `apps`; con `localhost` los contenedores no encuentran al broker) y la IP privada de ec2-kafka en AWS.
 - Necesita unos 3 GB de RAM: en AWS, una t2.medium o más.
 
 Levantar (local o en ec2-kafka):
 
 ```bash
 cd kafka
-cp .env.example .env      # en AWS, poner la IP privada de ec2-kafka en KAFKA_HOST
+cp .env.example .env      # completar KAFKA_UI_PASS; en AWS, la IP privada de ec2-kafka en KAFKA_HOST
 docker compose up -d
-docker compose ps         # esperar a que los 7 contenedores estén (healthy) o Up
+docker compose ps         # 3 zookeeper + 3 kafka (healthy), kafka-ui Up, kafka-init Exited (0)
 ```
 
-Comprobar que los 3 brokers están en el clúster:
+Operaciones replicables:
 
 ```bash
-docker exec -e JMX_PORT= kafka-1 kafka-broker-api-versions --bootstrap-server kafka-1:29092 | grep -c "id:"
+# Tópicos, configuración, consumer groups, offsets y lag
+docker compose exec kafka-1 bash /opt/vidasalud/scripts/inspeccionar.sh
+
+# Reprocesar un tópico desde el inicio (con el consumidor detenido). Sin --execute es una simulación.
+docker compose exec kafka-1 bash /opt/vidasalud/scripts/reiniciar-offsets.sh <grupo> <tópico> --execute
 ```
 
 Los microservicios se conectan con `KAFKA_BOOTSTRAP_SERVERS=IP:9092,IP:9093,IP:9094`.
