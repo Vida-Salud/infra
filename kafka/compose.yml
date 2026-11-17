@@ -1,0 +1,168 @@
+name: vidasalud-kafka
+
+x-zookeeper: &zookeeper
+  image: confluentinc/cp-zookeeper:7.9.8
+  restart: always
+  networks:
+    - kafka_cluster
+  healthcheck:
+    test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/2181 && echo srvr >&3 && grep -q Mode <&3'"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+
+x-zookeeper-env: &zookeeper-env
+  ZOOKEEPER_CLIENT_PORT: 2181
+  ZOOKEEPER_TICK_TIME: 2000
+  ZOOKEEPER_INIT_LIMIT: 5
+  ZOOKEEPER_SYNC_LIMIT: 2
+  ZOOKEEPER_SERVERS: zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888
+  KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+  KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=srvr,ruok,mntr"   
+
+x-kafka: &kafka
+  image: confluentinc/cp-kafka:7.9.8
+  restart: always
+  networks:
+    - kafka_cluster
+  depends_on:
+    zookeeper-1:
+      condition: service_healthy
+    zookeeper-2:
+      condition: service_healthy
+    zookeeper-3:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD-SHELL", "JMX_PORT= KAFKA_HEAP_OPTS=-Xmx64m kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1"]
+    interval: 30s
+    timeout: 10s
+    retries: 10
+    start_period: 30s
+
+x-kafka-env: &kafka-env
+  KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNO:PLAINTEXT,EXTERNO:PLAINTEXT
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNO
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_NUM_PARTITIONS: 3
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_LOG_RETENTION_HOURS: 168
+  KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+  KAFKA_JMX_PORT: 9997
+  KAFKA_JMX_HOSTNAME: localhost
+
+services:
+  zookeeper-1:
+    <<: *zookeeper
+    container_name: zookeeper-1
+    hostname: zookeeper-1
+    environment:
+      <<: *zookeeper-env
+      ZOOKEEPER_SERVER_ID: 1
+    volumes:
+      - zk_data_1:/var/lib/zookeeper/data
+      - zk_log_1:/var/lib/zookeeper/log
+
+  zookeeper-2:
+    <<: *zookeeper
+    container_name: zookeeper-2
+    hostname: zookeeper-2
+    environment:
+      <<: *zookeeper-env
+      ZOOKEEPER_SERVER_ID: 2
+    volumes:
+      - zk_data_2:/var/lib/zookeeper/data
+      - zk_log_2:/var/lib/zookeeper/log
+
+  zookeeper-3:
+    <<: *zookeeper
+    container_name: zookeeper-3
+    hostname: zookeeper-3
+    environment:
+      <<: *zookeeper-env
+      ZOOKEEPER_SERVER_ID: 3
+    volumes:
+      - zk_data_3:/var/lib/zookeeper/data
+      - zk_log_3:/var/lib/zookeeper/log
+
+  kafka-1:
+    <<: *kafka
+    container_name: kafka-1
+    hostname: kafka-1
+    ports:
+      - "9092:9092"
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 1
+      KAFKA_LISTENERS: INTERNO://0.0.0.0:29092,EXTERNO://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-1:29092,EXTERNO://${KAFKA_HOST:-localhost}:9092
+    volumes:
+      - kafka_data_1:/var/lib/kafka/data
+
+  kafka-2:
+    <<: *kafka
+    container_name: kafka-2
+    hostname: kafka-2
+    ports:
+      - "9093:9093"
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 2
+      KAFKA_LISTENERS: INTERNO://0.0.0.0:29092,EXTERNO://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-2:29092,EXTERNO://${KAFKA_HOST:-localhost}:9093
+    volumes:
+      - kafka_data_2:/var/lib/kafka/data
+
+  kafka-3:
+    <<: *kafka
+    container_name: kafka-3
+    hostname: kafka-3
+    ports:
+      - "9094:9094"
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 3
+      KAFKA_LISTENERS: INTERNO://0.0.0.0:29092,EXTERNO://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNO://kafka-3:29092,EXTERNO://${KAFKA_HOST:-localhost}:9094
+    volumes:
+      - kafka_data_3:/var/lib/kafka/data
+
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.5.0
+    container_name: kafka-ui
+    restart: always
+    ports:
+      - "8080:8080"     
+    environment:
+      KAFKA_CLUSTERS_0_NAME: vidasalud
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+      KAFKA_CLUSTERS_0_METRICS_PORT: 9997
+      DYNAMIC_CONFIG_ENABLED: "true"
+    networks:
+      - kafka_cluster
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+
+volumes:
+  zk_data_1:
+  zk_log_1:
+  zk_data_2:
+  zk_log_2:
+  zk_data_3:
+  zk_log_3:
+  kafka_data_1:
+  kafka_data_2:
+  kafka_data_3:
+
+networks:
+  kafka_cluster:
+    driver: bridge

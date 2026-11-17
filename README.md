@@ -7,6 +7,7 @@ Archivos de despliegue con Docker Compose. Cada carpeta corresponde a una EC2 de
 | `apps/compose.yml` | Local (PC de desarrollo) | Oracle, appointments, notify, Mailpit, catalog, rabbit-admin, bff, frontend |
 | `apps/compose.aws.yml` | **ec2-apps** (AWS) | Los mismos, con API Gateway, HTTPS y RabbitMQ en ec2-mq |
 | `mq/compose.yml` | Local y **ec2-mq** (AWS) | Clúster RabbitMQ de 2 nodos con Management UI |
+| `kafka/compose.yml` | Local y **ec2-kafka** (AWS) | Clúster Kafka: 3 Zookeeper, 3 brokers y Kafka UI |
 
 ## Arquitectura en AWS
 
@@ -99,6 +100,7 @@ Los contratos están en `docs/api-v1.md` (HTTP) y `docs/mensajes-v1.md` (RabbitM
 | Bandeja de correos (Mailpit) | http://localhost:8025 | http://IP-ec2-apps:8025 (con usuario y clave) |
 | RabbitMQ nodo 1 | http://localhost:15672 | http://IP-ec2-mq:15672 |
 | RabbitMQ nodo 2 | http://localhost:15673 | http://IP-ec2-mq:15673 |
+| Kafka UI | http://localhost:8080 | http://IP-ec2-kafka:8080 |
 
 ## Security Groups
 
@@ -111,6 +113,9 @@ Los contratos están en `docs/api-v1.md` (HTTP) y `docs/mensajes-v1.md` (RabbitM
 | ec2-apps | 8080 | Internet | BFF (API Gateway) |
 | ec2-apps | 8025 | IP de cada integrante del equipo ("My IP") | Bandeja de Mailpit |
 | ec2-apps | 8093 | IP de cada integrante (opcional) | rabbit-admin con Postman |
+| ec2-kafka | 9092-9094 | IP privada de ec2-apps | Brokers Kafka (microservicios) |
+| ec2-kafka | 8080 | IP de cada integrante del equipo ("My IP") | Kafka UI |
+| ec2-kafka | 22 | IP del administrador + EC2 Instance Connect | SSH |
 
 appointments (8081), catalog (8091) y Oracle (1521) no tienen regla: ya no se publican en el host.
 
@@ -121,6 +126,32 @@ El SMTP de Mailpit (1025) no se publica: solo lo usa notify por la red interna d
 - 2 nodos (`rabbitmq-1`, `rabbitmq-2`) unidos por `rabbitmq.conf` (`classic_config`) y la misma Erlang cookie.
 - Los microservicios se conectan con `RABBITMQ_ADDRESSES` (lista de los 2 nodos): si uno cae, se reconectan al otro.
 - Colas clásicas: la definición se comparte en el clúster; los mensajes viven en el nodo donde se creó la cola.
+
+## Clúster Kafka
+
+- **3 Zookeeper** (`zookeeper-1..3`): guardan los metadatos del clúster (qué brokers están vivos, quién es líder de cada partición). Con 3 nodos el quórum es 2, así que sigue funcionando si cae uno.
+- **3 brokers** (`kafka-1..3`): guardan las particiones. Por defecto cada tópico nuevo tiene 3 particiones y 3 réplicas, y `min.insync.replicas=2`: con `acks=all` se puede caer un broker sin perder datos ni dejar de escribir.
+- **Kafka UI** (puerto 8080): muestra brokers, tópicos, particiones, mensajes, consumer groups, offsets y lag.
+- `auto.create.topics.enable=false`: los tópicos se crean a propósito, con su configuración, y no al primer envío.
+- Cada broker tiene un listener **interno** (`kafka-N:29092`, entre brokers y para Kafka UI) y uno **externo** (9092, 9093 y 9094, para los microservicios). `KAFKA_HOST` en `kafka/.env` es la dirección que anuncian: `localhost` en el PC y la IP privada de ec2-kafka en AWS.
+- Necesita unos 3 GB de RAM: en AWS, una t2.medium o más.
+
+Levantar (local o en ec2-kafka):
+
+```bash
+cd kafka
+cp .env.example .env      # en AWS, poner la IP privada de ec2-kafka en KAFKA_HOST
+docker compose up -d
+docker compose ps         # esperar a que los 7 contenedores estén (healthy) o Up
+```
+
+Comprobar que los 3 brokers están en el clúster:
+
+```bash
+docker exec -e JMX_PORT= kafka-1 kafka-broker-api-versions --bootstrap-server kafka-1:29092 | grep -c "id:"
+```
+
+Los microservicios se conectan con `KAFKA_BOOTSTRAP_SERVERS=IP:9092,IP:9093,IP:9094`.
 
 ## Mailpit
 
