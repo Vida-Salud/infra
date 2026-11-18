@@ -152,7 +152,7 @@ services:
       DB_SERVICE: FREEPDB1
       DB_USERNAME: vidasalud
       DB_PASSWORD: ${DB_PASSWORD}
-      <<: *kafka
+      <<: [*azure, *kafka]
       TZ: America/Santiago
       # Kafka (consumidor): lee appointments.events con el grupo report-kpis
     ports:
