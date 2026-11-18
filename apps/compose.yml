@@ -10,6 +10,9 @@ x-rabbit: &rabbit
   RABBITMQ_USER: ${RABBITMQ_USER:-vidasalud}
   RABBITMQ_PASS: ${RABBITMQ_PASS:?falta en .env}
 
+x-kafka: &kafka
+  KAFKA_BOOTSTRAP_SERVERS: host.docker.internal:9092,host.docker.internal:9093,host.docker.internal:9094
+
 services:
   oracle:
     image: gvenzl/oracle-free:23-slim
@@ -39,7 +42,7 @@ services:
       DB_SERVICE: FREEPDB1
       DB_USERNAME: vidasalud
       DB_PASSWORD: ${DB_PASSWORD}
-      <<: [*azure, *rabbit]
+      <<: [*azure, *rabbit, *kafka]
       TZ: America/Santiago
       # RabbitMQ (productor): clúster de 2 nodos (infra/mq), se accede vía el host
     ports:
