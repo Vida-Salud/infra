@@ -11,6 +11,7 @@ x-rabbit: &rabbit
   RABBITMQ_PASS: ${RABBITMQ_PASS:?falta en .env}
 
 x-kafka: &kafka
+  # Clúster de 3 brokers (infra/kafka); se accede vía el host, igual que RabbitMQ
   KAFKA_BOOTSTRAP_SERVERS: host.docker.internal:9092,host.docker.internal:9093,host.docker.internal:9094
 
 services:
@@ -45,6 +46,7 @@ services:
       <<: [*azure, *rabbit, *kafka]
       TZ: America/Santiago
       # RabbitMQ (productor): clúster de 2 nodos (infra/mq), se accede vía el host
+      # Kafka (productor): publica cada cambio de estado en appointments.events
     ports:
       - "8081:8081"
     extra_hosts:
@@ -145,7 +147,8 @@ services:
     build:
       context: ../../ms-vidasalud-report
       dockerfile: Dockerfile
-    container_name: vidasalud-report
+    # Sin container_name ni puerto publicado: así se puede escalar para ver el balanceo del
+    # consumer group (docker compose up -d --scale report=2). Se consulta a través del BFF.
     environment:
       DB_HOST: oracle
       DB_PORT: 1521
@@ -154,9 +157,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       <<: [*azure, *kafka]
       TZ: America/Santiago
-      # Kafka (consumidor): lee appointments.events con el grupo report-kpis
-    ports:
-      - "8094:8094"
+      # Kafka (consumidor): grupo report-kpis sobre appointments.events (DLT: appointments.events.report.DLT)
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    expose:
+      - "8094"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -164,6 +168,59 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8094/actuator/health/liveness"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: on-failure
+
+  audit:
+    build:
+      context: ../../ms-vidasalud-audit
+      dockerfile: Dockerfile
+    container_name: vidasalud-audit
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      DB_SERVICE: FREEPDB1
+      DB_USERNAME: vidasalud
+      DB_PASSWORD: ${DB_PASSWORD}
+      <<: [*azure, *kafka]
+      TZ: America/Santiago
+      # Kafka: grupo vidasalud-audit (appointments.events -> audit.timeline)
+      #        y grupo vidasalud-audit-timeline (audit.timeline -> Oracle)
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    ports:
+      - "8096:8096"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      oracle:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8096/actuator/health/liveness"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: on-failure
+
+  kafka-admin:
+    build:
+      context: ../../ms-vidasalud-kafka-admin
+      dockerfile: Dockerfile
+    container_name: vidasalud-kafka-admin
+    environment:
+      <<: [*azure, *kafka]
+      TZ: America/Santiago
+      # Kafka: administra tópicos, configuraciones y grupos del clúster (infra/kafka)
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    ports:
+      - "8095:8095"   # se prueba con Postman (JWT con rol Admin)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8095/actuator/health/liveness"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -179,6 +236,8 @@ services:
       <<: *azure
       APPOINTMENTS_URL: http://appointments:8081
       CATALOG_URL: http://catalog:8091
+      REPORT_URL: http://report:8094
+      AUDIT_URL: http://audit:8096
       TZ: America/Santiago
     ports:
       - "8090:8090"

@@ -4,10 +4,10 @@ Archivos de despliegue con Docker Compose. Cada carpeta corresponde a una EC2 de
 
 | Archivo | Dónde se usa | Servicios |
 |---|---|---|
-| `apps/compose.yml` | Local (PC de desarrollo) | Oracle, appointments, notify, Mailpit, catalog, rabbit-admin, bff, frontend |
+| `apps/compose.yml` | Local (PC de desarrollo) | Oracle, appointments, notify, Mailpit, catalog, rabbit-admin, report, audit, kafka-admin, bff, frontend |
 | `apps/compose.aws.yml` | **ec2-apps** (AWS) | Los mismos, con API Gateway, HTTPS y RabbitMQ en ec2-mq |
 | `mq/compose.yml` | Local y **ec2-mq** (AWS) | Clúster RabbitMQ de 2 nodos con Management UI |
-| `kafka/compose.yml` | Local y **ec2-kafka** (AWS) | Clúster Kafka: 3 Zookeeper, 3 brokers y Kafka UI |
+| `kafka/compose.yml` | Local (y **ec2-kafka** cuando se despliegue) | Clúster Kafka: 3 Zookeeper, 3 brokers, `kafka-init` (crea los tópicos) y Kafka UI |
 
 ## Arquitectura en AWS
 
@@ -38,6 +38,9 @@ carpeta/
 ├── ms-vidasalud-catalog/
 ├── ms-vidasalud-bff/
 ├── ms-vidasalud-rabbit-admin/
+├── ms-vidasalud-report/
+├── ms-vidasalud-audit/
+├── ms-vidasalud-kafka-admin/
 └── frontend-vidasalud/
 ```
 
@@ -55,12 +58,24 @@ docker compose up -d
 docker compose ps
 ```
 
+Después Kafka (copia `kafka/.env.example` a `kafka/.env` y define `KAFKA_UI_PASS`). La primera vez tarda:
+los 3 brokers esperan a que ZooKeeper tenga quórum y `kafka-init` crea los tópicos.
+
+```bash
+cd ../kafka
+docker compose up -d
+docker compose ps                  # zookeeper-1..3 y kafka-1..3 (healthy); kafka-init "exited (0)"
+```
+
 Después los microservicios:
 
 ```bash
 cd ../apps
 docker compose up -d --build
 ```
+
+Para ver el balanceo del consumer group de reportería: `docker compose up -d --scale report=2` y revisar el grupo
+`report-kpis` en Kafka UI (cada instancia tiene particiones distintas).
 
 ## Desplegar en AWS
 
@@ -88,7 +103,12 @@ docker compose -f compose.aws.yml up -d --build --no-deps notify
 
 `compose.aws.yml` usa `name: vidasalud-deploy` para reutilizar los contenedores existentes. Oracle guarda sus datos en el volumen `oracle_data`: recrear el contenedor no los borra. Los servicios con healthcheck (`appointments`, `catalog`, `notify`, `rabbit-admin`, `bff`) informan `(healthy)` en `docker compose ps`; el BFF espera a appointments y catalog. En AWS, appointments, catalog y Oracle no se publican en el host (solo `expose`): para consultar la base, `docker exec -it vidasalud-oracle sqlplus vidasalud@//localhost/FREEPDB1`.
 
-Los contratos están en `docs/api-v1.md` (HTTP) y `docs/mensajes-v1.md` (RabbitMQ).
+Los contratos están en `docs/api-v1.md` (HTTP), `docs/mensajes-v1.md` (RabbitMQ) y `docs/eventos-v1.md` (Kafka).
+Las decisiones de diseño de Kafka están en `docs/kafka-diseno.md`.
+
+`compose.aws.yml` todavía no incluye Kafka (no hay ec2-kafka): appointments arranca con `KAFKA_HABILITADO=false`
+y no publica eventos. Para desplegarlo: levantar `infra/kafka` en una EC2 con `KAFKA_HOST` = su IP privada,
+agregar report, audit y kafka-admin a `compose.aws.yml` y definir `KAFKA_BOOTSTRAP_SERVERS` con esa IP.
 
 ## Accesos
 
@@ -100,7 +120,10 @@ Los contratos están en `docs/api-v1.md` (HTTP) y `docs/mensajes-v1.md` (RabbitM
 | Bandeja de correos (Mailpit) | http://localhost:8025 | http://IP-ec2-apps:8025 (con usuario y clave) |
 | RabbitMQ nodo 1 | http://localhost:15672 | http://IP-ec2-mq:15672 |
 | RabbitMQ nodo 2 | http://localhost:15673 | http://IP-ec2-mq:15673 |
-| Kafka UI | http://localhost:8080 | http://IP-ec2-kafka:8080 |
+| Kafka UI | http://localhost:8080 (usuario y clave de `kafka/.env`) | http://IP-ec2-kafka:8080 |
+| kafka-admin | http://localhost:8095 (solo Admin, por Postman) | — |
+| audit (directo, para pruebas) | http://localhost:8096 | — |
+| Kafka (clientes) | localhost:9092, 9093, 9094 | IP-privada-ec2-kafka:9092, 9093, 9094 |
 
 ## Security Groups
 
