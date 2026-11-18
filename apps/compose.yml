@@ -141,6 +141,35 @@ services:
       start_period: 60s
     restart: on-failure
 
+  report:
+    build:
+      context: ../../ms-vidasalud-report
+      dockerfile: Dockerfile
+    container_name: vidasalud-report
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      DB_SERVICE: FREEPDB1
+      DB_USERNAME: vidasalud
+      DB_PASSWORD: ${DB_PASSWORD}
+      <<: *kafka
+      TZ: America/Santiago
+      # Kafka (consumidor): lee appointments.events con el grupo report-kpis
+    ports:
+      - "8094:8094"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      oracle:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8094/actuator/health/liveness"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: on-failure
+
   bff:
     build:
       context: ../../ms-vidasalud-bff
