@@ -9,7 +9,7 @@ appointments publica en ambos después del commit, a partir del mismo evento de 
 | Tópico | Particiones | Réplicas | min.insync | cleanup.policy | Retención | Clave | Productor | Consumer groups |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `appointments.events` | 3 | 3 | 2 | `delete` | 7 días | `atencionId` | appointments | `report-kpis`, `vidasalud-audit` |
-| `audit.timeline` | 3 | 3 | 2 | `compact,delete` | 30 días | `eventId` | audit | `vidasalud-audit-timeline` |
+| `audit.timeline` | 3 | 3 | 2 | `compact,delete` | 30 días | `atencionId` | audit | `vidasalud-audit-timeline` |
 | `appointments.events.report.DLT` | 3 | 3 | 2 | `delete` | 14 días | la original | report (error handler) | — (inspección en Kafka UI) |
 | `appointments.events.audit.DLT` | 3 | 3 | 2 | `delete` | 14 días | la original | audit (error handler) | — |
 | `audit.timeline.audit.DLT` | 3 | 3 | 2 | `delete` | 14 días | la original | audit (error handler) | — |
@@ -37,8 +37,10 @@ La fuente de verdad es `infra/kafka/topics.conf`; `kafka-init` la aplica al leva
 ```
 
 `APPOINTMENT_CREATED` lleva `estadoAnterior: null` y `estado: "SOLICITADA"`. A diferencia de RabbitMQ, se publican
-**todos** los estados. El evento no lleva el nombre del paciente ni datos clínicos. `origen.ip` es el primer valor de
-`X-Forwarded-For` (lo agrega el BFF) o la IP de la conexión.
+**todos** los estados. El evento no lleva el nombre del paciente ni datos clínicos. `origen.ip` es el valor de
+`X-Forwarded-For` que manda el BFF (o la IP de la conexión si no viene). El BFF no reenvía la cabecera del cliente,
+porque cualquiera puede inventarla: manda un único valor que determina él, usando `vidasalud.proxies-de-confianza`
+para saber cuántos proxies hay delante (0 en local; 1 en AWS, detrás del API Gateway).
 
 ## `audit.timeline`
 
@@ -55,8 +57,11 @@ La fuente de verdad es `infra/kafka/topics.conf`; `kafka-init` la aplica al leva
 
 ## Reglas
 
-- **Orden**: la clave de `appointments.events` es el `atencionId`; todos los eventos de una atención caen en la
-  misma partición y se consumen en orden.
+- **Orden**: la clave de `appointments.events` y de `audit.timeline` es el `atencionId`; todos los eventos de una
+  atención caen en la misma partición y se consumen en orden.
+- **Compactación de `audit.timeline`**: con la clave `atencionId`, `compact` conserva el último estado conocido de
+  cada atención y `delete` borra a los 30 días. El historial completo e inmutable está en Oracle (`AUD_EVENTO`,
+  una fila por `eventId`), no en Kafka.
 - **Entrega al menos una vez**: productores con `acks=all` + `enable.idempotence=true`; los consumidores
   confirman el offset después de procesar (`ack-mode: record`) y descartan duplicados por `eventId`
   (report: tabla `REPORT_EVENTO`; audit: clave primaria de `AUD_EVENTO`).
